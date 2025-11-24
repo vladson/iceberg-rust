@@ -374,7 +374,7 @@ pub(crate) fn create_lock_request(
         component: vec![component],
         txnid: None,
         user: FastStr::from(whoami::username()),
-        hostname: FastStr::from(whoami::fallible::hostname()),
+        hostname: FastStr::from(whoami::fallible::hostname().unwrap()),
         agent_info: None,
     }
 }
