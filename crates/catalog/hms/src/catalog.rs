@@ -50,6 +50,13 @@ pub const THRIFT_TRANSPORT_BUFFERED: &str = "buffered";
 /// HMS Catalog warehouse location
 pub const HMS_CATALOG_PROP_WAREHOUSE: &str = "warehouse";
 
+///HMS Hive Locks Disabled
+pub const HMS_HIVE_LOCKS_DISABLED: &str = "hive_locks_disabled";
+
+/// HMS Environment Context
+const HMS_EXPECTED_PARAMETER_KEY: &str = "expected_parameter_key";
+const HMS_EXPECTED_PARAMETER_VALUE: &str = "expected_parameter_value";
+
 /// Builder for [`RestCatalog`].
 #[derive(Debug)]
 pub struct HmsCatalogBuilder(HmsCatalogConfig);
@@ -603,10 +610,68 @@ impl Catalog for HmsCatalog {
         ))
     }
 
-    async fn update_table(&self, _commit: TableCommit) -> Result<Table> {
-        Err(Error::new(
-            ErrorKind::FeatureUnsupported,
-            "Updating a table is not supported yet",
-        ))
+    async fn update_table(&self, commit: TableCommit) -> Result<Table> {
+        let ident = commit.identifier().clone();
+        let db_name = validate_namespace(ident.namespace())?;
+        let tbl_name = ident.name.clone();
+
+        // if HMS_HIVE_LOCKS_DISABLED is set
+        if let Some(tt) = &self.config.props.get(HMS_HIVE_LOCKS_DISABLED) {
+            // Do alter table with env context
+            Err(Error::new(ErrorKind::Unexpected, "Optimistic locks are not supported yet"))
+        } else {
+            // start with trying to acquire a lock
+            let lock = &self
+                .client
+                .0
+                .lock(create_lock_request(&db_name, &tbl_name))
+                .await
+                .map(from_thrift_exception)
+                .map_err(from_thrift_error)??;
+
+            let hive_table = self
+                .client
+                .0
+                .get_table(db_name.clone().into(), tbl_name.clone().into())
+                .await
+                .map(from_thrift_exception)
+                .map_err(from_thrift_error)??;
+
+            let metadata_location = get_metadata_location(&hive_table.parameters)?;
+
+            let metadata = TableMetadata::read_from(&self.file_io, &metadata_location).await?;
+
+            let cur_table = Table::builder()
+                .file_io(self.file_io())
+                .metadata_location(metadata_location)
+                .metadata(metadata)
+                .identifier(TableIdent::new(
+                    NamespaceIdent::new(db_name.clone()),
+                    tbl_name.clone(),
+                ))
+                .build()?;
+
+            let staged_table = commit.apply(cur_table)?;
+            staged_table
+                .metadata()
+                .write_to(
+                    staged_table.file_io(),
+                    staged_table.metadata().metadata_location(),
+                )
+                .await?;
+            let new_hive_table = update_hive_table_from_table(hive_table, &staged_table)?;
+
+            let updated = self.client.0.alter_table(
+                db_name.clone().into(),
+                tbl_name.clone().into(),
+                new_hive_table,
+            ).await
+            .map(from_thrift_exception)
+            .map_err(from_thrift_error)??;
+
+            // unlock the table after alter table
+            &self.client.0.unlock(lock.lockid).await.map(from_thrift_error)?;
+            Ok(staged_table)
+        }
     }
 }
