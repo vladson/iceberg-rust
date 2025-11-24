@@ -54,7 +54,10 @@ pub const HMS_CATALOG_PROP_WAREHOUSE: &str = "warehouse";
 pub const HMS_HIVE_LOCKS_DISABLED: &str = "hive_locks_disabled";
 
 /// HMS Environment Context
+/// These constants are reserved for future use with optimistic locking
+#[allow(dead_code)]
 const HMS_EXPECTED_PARAMETER_KEY: &str = "expected_parameter_key";
+#[allow(dead_code)]
 const HMS_EXPECTED_PARAMETER_VALUE: &str = "expected_parameter_value";
 
 /// Builder for [`RestCatalog`].
@@ -616,7 +619,7 @@ impl Catalog for HmsCatalog {
         let tbl_name = ident.name.clone();
 
         // if HMS_HIVE_LOCKS_DISABLED is set
-        if let Some(tt) = &self.config.props.get(HMS_HIVE_LOCKS_DISABLED) {
+        if let Some(_tt) = &self.config.props.get(HMS_HIVE_LOCKS_DISABLED) {
             // Do alter table with env context
             Err(Error::new(ErrorKind::Unexpected, "Optimistic locks are not supported yet"))
         } else {
@@ -656,21 +659,23 @@ impl Catalog for HmsCatalog {
                 .metadata()
                 .write_to(
                     staged_table.file_io(),
-                    staged_table.metadata().metadata_location(),
+                    staged_table.metadata_location_result()?,
                 )
                 .await?;
-            let new_hive_table = update_hive_table_from_table(hive_table, &staged_table)?;
+            let new_hive_table = update_hive_table_from_table(&hive_table, &staged_table)?;
 
-            let updated = self.client.0.alter_table(
+            self.client.0.alter_table(
                 db_name.clone().into(),
                 tbl_name.clone().into(),
                 new_hive_table,
             ).await
-            .map(from_thrift_exception)
-            .map_err(from_thrift_error)??;
+            .map_err(from_thrift_error)?;
 
             // unlock the table after alter table
-            &self.client.0.unlock(lock.lockid).await.map(from_thrift_error)?;
+            self.client.0.unlock(hive_metastore::UnlockRequest { lockid: lock.lockid })
+                .await
+                .map(from_thrift_exception)
+                .map_err(from_thrift_error)??;
             Ok(staged_table)
         }
     }

@@ -187,7 +187,7 @@ pub(crate) fn update_hive_table_from_table(
         if k == METADATA_LOCATION || k == TABLE_TYPE || k == EXTERNAL {
             continue;
         }
-        params.insert(k.as_str().clone().into(), v.as_str().clone().into());
+        params.insert(FastStr::from_string(k.to_string()), FastStr::from_string(v.to_string()));
     }
 
     params.insert(FastStr::from(EXTERNAL), FastStr::from("TRUE"));

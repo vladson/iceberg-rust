@@ -34,7 +34,7 @@ use iceberg_test_utils::{normalize_test_name, set_up};
 use port_scanner::scan_port_addr;
 use tokio::time::sleep;
 use tracing::info;
-use iceberg::transaction::Transaction;
+use iceberg::transaction::{Transaction, ApplyTransactionAction};
 
 const HMS_CATALOG_PORT: u16 = 9083;
 const MINIO_PORT: u16 = 9000;
